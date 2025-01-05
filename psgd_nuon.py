@@ -31,7 +31,7 @@ def zeropower_via_newtonschulz5(G, steps):
     return X
 
 
-def single_sided_whiteningn(G, Q, lr_precond=0.1):
+def single_sided_whiteningn(G, Q, lr_param=0.1):
     m, n = G.shape
     assert(m >= n)
     V = torch.randn_like(G)/m**0.5
@@ -39,54 +39,58 @@ def single_sided_whiteningn(G, Q, lr_precond=0.1):
     Bh = torch.linalg.solve_triangular(Q, V, upper=True, left=False)
     AhA = A.T @ A
     BBh = Bh.T @ Bh
-    Q = Q - lr_precond/torch.linalg.matrix_norm(AhA + BBh, ord=2) * torch.triu(AhA - BBh) @ Q
+    Q = Q - lr_param/torch.linalg.matrix_norm(AhA + BBh, ord=2) * torch.triu(AhA - BBh) @ Q
     return Q
 
 
 class Nuon(torch.optim.Optimizer):
     """
-    Nuon - MomentUm Orthogonalized by one sided psgd whitening
+    Muon - MomentUm Orthogonalized by Newton-schulz
 
-    Nuon internally runs standard SGD-momentum, and then performs an orthogonalization post-
+    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
     processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
-    matrix. To efficiently orthogonalize each update, we use a learned one sided psgd whitening iteration, which has
+    matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
     the advantage that it can be stably run in bfloat16 on the GPU.
 
+    Some warnings:
+    - We believe this optimizer is unlikely to work well for training with small batch size.
+    - We believe it may not work well for finetuning pretrained models, but we haven't tested this.
+
     Arguments:
-        nuon_params: The parameters to be optimized by Nuon.
+        muon_params: The parameters to be optimized by Muon.
         lr: The learning rate. The updates will have spectral norm of `lr`. (0.02 is a good default)
         momentum: The momentum used by the internal SGD. (0.95 is a good default)
         nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
         ns_steps: The number of Newton-Schulz iterations to run. (6 is probably always enough)
-        adamw_params: The parameters to be optimized by AdamW. Any parameters in `nuon_params` which are
+        adamw_params: The parameters to be optimized by AdamW. Any parameters in `muon_params` which are
         {0, 1}-D or are detected as being the embed or lm_head will be optimized by AdamW as well.
         adamw_lr: The learning rate for the internal AdamW.
         adamw_betas: The betas for the internal AdamW.
         adamw_eps: The epsilon for the internal AdamW.
         adamw_wd: The weight decay for the internal AdamW.
     """
-    def __init__(self, nuon_params, lr=0.02, lr_precond=0.1, momentum=0.95, nesterov=True, ns_steps=6,
+    def __init__(self, muon_params, lr=0.02, lr_param=0.1, momentum=0.95, nesterov=True, ns_steps=6,
                  adamw_params=None, adamw_lr=3e-4, adamw_betas=(0.95, 0.95), adamw_eps=1e-8, adamw_wd=0):
 
-        defaults = dict(lr=lr, lr_precond=lr_precond, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps,
+        defaults = dict(lr=lr, lr_param=lr_param, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps,
                         adamw_lr_ratio=adamw_lr/lr, adamw_betas=adamw_betas,
                         adamw_eps=adamw_eps, adamw_wd=adamw_wd)
 
-        params = list(nuon_params)
+        params = list(muon_params)
         adamw_params = list(adamw_params) if adamw_params is not None else []
         params.extend(adamw_params)
         super().__init__(params, defaults)
 
-        # Sort parameters into those for which we will use Nuon, and those for which we will not
-        for p in nuon_params:
-            # Use Nuon for every parameter in nuon_params which is >= 2D and doesn't look like an embedding or head layer
+        # Sort parameters into those for which we will use Muon, and those for which we will not
+        for p in muon_params:
+            # Use Muon for every parameter in muon_params which is >= 2D and doesn't look like an embedding or head layer
             if p.ndim >= 2 and p.size(0) < 10000:
-                self.state[p]['use_nuon'] = True
+                self.state[p]['use_muon'] = True
             else:
-                self.state[p]['use_nuon'] = False
+                self.state[p]['use_muon'] = False
         for p in adamw_params:
-            # Do not use Nuon for parameters in adamw_params
-            self.state[p]['use_nuon'] = False
+            # Do not use Muon for parameters in adamw_params
+            self.state[p]['use_muon'] = False
 
         if 'WORLD_SIZE' in os.environ:
             self.world_size = int(os.environ['WORLD_SIZE'])
@@ -105,10 +109,10 @@ class Nuon(torch.optim.Optimizer):
 
         for group in self.param_groups:
             ############################
-            #           Nuon           #
+            #           Muon           #
             ############################
 
-            params = [p for p in group['params'] if self.state[p]['use_nuon']]
+            params = [p for p in group['params'] if self.state[p]['use_muon']]
             lr = group['lr']
             momentum = group['momentum']
 
@@ -136,7 +140,7 @@ class Nuon(torch.optim.Optimizer):
                 Q = state['Q']
 
                 # Update Q matrix and apply gradient orthogonalization
-                Q = single_sided_whiteningn(g, Q, lr_precond=group['lr_precond'])
+                Q = single_sided_whiteningn(g, Q, lr_param=group['lr_param'])
                 state['Q'] = Q
                 g = g @ Q.T @ Q
                 g *= max(1, g.size(0) / g.size(1))**0.5
@@ -148,7 +152,7 @@ class Nuon(torch.optim.Optimizer):
             #       AdamW backup       #
             ############################
 
-            params = [p for p in group['params'] if not self.state[p]['use_nuon']]
+            params = [p for p in group['params'] if not self.state[p]['use_muon']]
             lr = group['adamw_lr_ratio'] * group['lr']  # Adjust learning rate
             beta1, beta2 = group['adamw_betas']
             eps = group['adamw_eps']
