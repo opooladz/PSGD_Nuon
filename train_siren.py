@@ -64,13 +64,14 @@ def train_single_image():
     optimizer = Nuon(
         nuon_params,
         lr=0.0035,
-        lr_param=0.5,
+        lr_param=1,
         momentum=0.9,
         adamw_params=adamw_params,
-        adamw_lr=3e-5,
+        adamw_lr=3e-4,
         adamw_betas=(0.90, 0.95),
         adamw_wd=0
-    )
+    )    
+    
 
     # Prepare target pixels
     pixels = img.reshape(-1, 3).to(device)
