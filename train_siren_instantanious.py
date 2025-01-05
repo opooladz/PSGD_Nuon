@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import torchvision
 import numpy as np
 import random
-from psgd_nuon import Nuon
+from psgd_nuon_instantanious import Nuon
 
 class Sine(nn.Module):
     def forward(self, x):
