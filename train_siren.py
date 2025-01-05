@@ -64,6 +64,7 @@ def train_single_image():
     optimizer = Nuon(
         nuon_params,
         lr=0.035,
+        lr_precond=1.8,
         momentum=0.92,
         adamw_params=adamw_params,
         adamw_lr=3e-5,
