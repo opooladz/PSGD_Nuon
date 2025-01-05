@@ -9,9 +9,9 @@ Use single sided whitening that is dynamic and learned instead of being instanta
 ![image](https://github.com/user-attachments/assets/7d7fbf87-53b7-4c2e-b683-de24d9c54f30)
 
 
-Siren exmple with Nuon beats Muon tuned by Keller
+Siren exmple with Nuon beats Muon tuned
 
-Hyper-params by Keller for Muon: reaches loss of 0.000982 PSGD Nuon reaches loss of 0.000979
+Hyper-params for Muon(Keller): reaches loss of 0.000982 PSGD Nuon reaches loss of 0.000979
 ```python
     # Assuming Muon is defined elsewhere
     optimizer = Muon(
