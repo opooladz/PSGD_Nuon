@@ -5,8 +5,8 @@ Use single sided whitening that is dynamic and learned instead of being instanta
 
 ## SIREN Example
 
-![image](https://github.com/user-attachments/assets/28aab08c-57d3-425a-b123-1733bbb9e9c0)
-![image](https://github.com/user-attachments/assets/7d7fbf87-53b7-4c2e-b683-de24d9c54f30)
+![image](https://github.com/user-attachments/assets/89db50c0-d729-46d2-a501-85b774d03f62)
+![image](https://github.com/user-attachments/assets/b6ee1f0f-96b4-4e70-9edf-56b0ecfa4186)
 
 
 Siren exmple with Nuon beats Muon tuned
