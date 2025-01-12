@@ -21,7 +21,7 @@ def norm_lower_bound(A):
     max_abs = A.norm(float("inf"))
     return torch.where(max_abs > 0, _lb(A, max_abs), max_abs)
 
-def single_sided_whitening(G, Q, lr_param=0.5):
+def single_sided_whitening(G, Q, lr_param=0.1):
     m, n = G.shape
     assert(m>=n)
     V = torch.randn_like(G)/m**0.5
