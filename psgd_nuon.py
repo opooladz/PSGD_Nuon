@@ -106,7 +106,7 @@ class Nuon(torch.optim.Optimizer):
 
                 # Initialize or retrieve the Q matrix
                 if 'Q' not in state:
-                    state['Q'] = torch.eye(g.shape[0], device=g.device)
+                    state['Q'] = torch.eye(g.shape[1], device=g.device)
                 Q = state['Q']
 
                 # Decide whether to call the whitening function
