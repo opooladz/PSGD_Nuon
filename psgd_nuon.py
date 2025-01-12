@@ -1,53 +1,45 @@
 import os
 import torch
-import torch.distributed as dist
 
-def zeropower_via_newtonschulz5(G, steps):
-    """
-    Newton-Schulz iteration to compute the zeroth power / orthogonalization of G. We opt to use a
-    quintic iteration whose coefficients are selected to maximize the slope at zero. For the purpose
-    of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
-    zero even beyond the point where the iteration no longer converges all the way to one everywhere
-    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
-    where S' is diagonal with S_{ii}' ~ Uniform(0.5, 1.5), which turns out not to hurt model
-    performance at all relative to UV^T, where USV^T = G is the SVD.
-    """
-    assert len(G.shape) == 2
-    a, b, c = (3.4445, -4.7750,  2.0315)
-    X = G.bfloat16()
-    if G.size(0) > G.size(1):
-        X = X.T
+def _lb(A, max_abs):
+    A = A / max_abs
+    aa = torch.real(A * A.conj())
+    value0, i = torch.max(torch.sum(aa, dim=0), 0)
+    value1, j = torch.max(torch.sum(aa, dim=1), 0)
+    if value0 > value1:
+        x = A[:, i].conj() @ A
+        return max_abs * torch.linalg.vector_norm(
+            (x / torch.linalg.vector_norm(x)) @ A.H
+        )
+    else:
+        x = A @ A[j].conj()
+        return max_abs * torch.linalg.vector_norm(
+            A.H @ (x / torch.linalg.vector_norm(x))
+        )
+def norm_lower_bound(A):
+    """Cheap lower bound for the spectral norm of A."""
+    max_abs = A.norm(float("inf"))
+    return torch.where(max_abs > 0, _lb(A, max_abs), max_abs)
 
-    # Ensure spectral norm is at most 1
-    X = X / (X.norm() + 1e-7)
-    # Perform the NS iterations
-    for _ in range(steps):
-        A = X @ X.T
-        B = b * A + c * A @ A # adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
-        X = a * X + B @ X
+def single_sided_whitening(G, Q, lr_param=0.1):
+    m, n = G.shape
+    assert(m>=n)
+    V = torch.randn_like(G)/m**0.5
+    A = G @ Q.T
+    Bh = torch.linalg.solve_triangular(Q, V, upper=True, left=False)
+    AhA = A.T @ A
+    BBh = Bh.T @ Bh
+    Q = Q - lr_param/norm_lower_bound(AhA + BBh) * torch.triu(AhA - BBh) @ Q
+    return Q
 
-    if G.size(0) > G.size(1):
-        X = X.T
-    return X
 
-
-def single_sided_whiteningn(G, Q, lr_param=0.1):
-      m, n = G.shape
-      assert(m >= n)
-      V = torch.randn_like(G)/m**0.5
-      A = G @ Q.T
-      Bh = torch.linalg.solve_triangular(Q, V, upper=True, left=False)
-      AhA = A.T @ A
-      BBh = Bh.T @ Bh
-      Q = Q - lr_param/torch.linalg.matrix_norm(AhA + BBh, ord=2) * torch.triu(AhA - BBh) @ Q
-      return Q
-
+import torch
 class Nuon(torch.optim.Optimizer):
-    def __init__(self, muon_params, lr=0.02, lr_param=0.1, momentum=0.95, nesterov=True, ns_steps=6,
+    def __init__(self, muon_params, lr=0.002, lr_param=0.1, momentum=0.95, nesterov=True,
                  whitening_prob=1.0, 
                  adamw_params=None, adamw_lr=3e-4, adamw_betas=(0.95, 0.95), adamw_eps=1e-8, adamw_wd=0):
 
-        defaults = dict(lr=lr, lr_param=lr_param, momentum=momentum, nesterov=nesterov, ns_steps=ns_steps,
+        defaults = dict(lr=lr, lr_param=lr_param, momentum=momentum, nesterov=nesterov,
                         whitening_prob=whitening_prob,  # Include in defaults
                         adamw_lr_ratio=adamw_lr / lr, adamw_betas=adamw_betas,
                         adamw_eps=adamw_eps, adamw_wd=adamw_wd)
@@ -104,18 +96,27 @@ class Nuon(torch.optim.Optimizer):
                 else:
                     g = buf
 
+
+                m, n = g.shape
+                if m<n:
+                  g = g.T
                 # Initialize or retrieve the Q matrix
                 if 'Q' not in state:
-                    state['Q'] = torch.eye(g.shape[1], device=g.device)
+                  state['Q'] = torch.eye(g.shape[1], device=g.device)
+
                 Q = state['Q']
 
                 # Decide whether to call the whitening function
-                if torch.rand(1).item() < whitening_prob:
-                    Q = single_sided_whiteningn(g, Q, lr_param=group['lr_param'])
+                if torch.rand(1).item() < whitening_prob:                  
+                    Q = single_sided_whitening(g, Q, lr_param=group['lr_param'])
                     state['Q'] = Q  # Update Q only if whitening is called
 
                 # Use Q to whiten the gradient
-                g = g @ Q.T @ Q
+                if m >= n:
+                  g = g @ Q.T @ Q                
+                else:
+                  g =  Q @ Q.T @ g.T 
+
                 g *= max(1, g.size(0) / g.size(1))**0.5
 
                 # Apply the gradient update
