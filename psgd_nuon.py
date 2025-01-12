@@ -21,7 +21,7 @@ def norm_lower_bound(A):
     max_abs = A.norm(float("inf"))
     return torch.where(max_abs > 0, _lb(A, max_abs), max_abs)
 
-def single_sided_whitening(G, Q, lr_param=0.1):
+def single_sided_whitening(G, Q, lr_param=0.5):
     m, n = G.shape
     assert(m>=n)
     V = torch.randn_like(G)/m**0.5
@@ -112,11 +112,9 @@ class Nuon(torch.optim.Optimizer):
                     state['Q'] = Q  # Update Q only if whitening is called
 
                 # Use Q to whiten the gradient
-                if m >= n:
-                  g = g @ Q.T @ Q                
-                else:
-                  g =  Q @ Q.T @ g.T 
-
+                g = g @ Q.T @ Q                
+                if m<n:
+                  g = g.T
                 g *= max(1, g.size(0) / g.size(1))**0.5
 
                 # Apply the gradient update
